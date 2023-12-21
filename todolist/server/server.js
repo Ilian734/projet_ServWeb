@@ -1,82 +1,64 @@
-document.addEventListener('DOMContentLoaded', function () {
-    const taskList = document.getElementById('task-list');
-    const loadMoreButton = document.getElementById('load-more');
+const express = require('express');
+const bodyParser = require('body-parser');
+const { MongoClient } = require('mongodb');
+const mongo = require('mongodb');
+const app = express();
+const path = require('path');
+const PORT = process.env.PORT || 3000;
+const MONGODB_URI = 'mongodb://localhost:27017/todo-app';
 
-  
-    let page = 1;
- 
 
-    function loadTasks() {
-        fetch(`/tasks?page=${page}`)
-            .then(response => response.json())
-            .then(tasks => {
-                tasks.forEach(addTaskToList);
-                page++;
-                // Afficher ou masquer le bouton "Charger plus" en fonction des tâches restantes
-                loadMoreButton.style.display = tasks.length < 10 ? 'none' : 'block';
-            })
-            .catch(error => {
-                console.error('Erreur lors du chargement des tâches :', error);
-            });
+app.use(bodyParser.json());
+
+// Servir les fichiers statiques depuis le dossier 'public'
+app.use(express.static('public'));
+
+MongoClient.connect(MONGODB_URI, { useNewUrlParser: true, useUnifiedTopology: true }, (err, client) => {
+    if (err) {
+        console.error('Erreur de connexion à MongoDB', err);
+        return;
     }
 
-    function addTaskToList(task) {
-        const listItem = document.createElement('li');
-        listItem.innerHTML = `
-            <span>${task.description}</span>
-            <button class="delete" data-id="${task._id}">Supprimer</button>
-            <button class="complete" data-id="${task._id}">Terminé</button>
-        `;
-        if (task.completed) {
-            listItem.classList.add('completed');
-        }
+    const db = client.db('todo-app');
+    const tasksCollection = db.collection('tasks');
 
-        taskList.appendChild(listItem);
+    app.get('/', (req, res) => {
+        res.sendFile(path.join(__dirname, 'public', 'index.html'));
+    });
 
-        const deleteButton = listItem.querySelector('.delete');
-        deleteButton.addEventListener('click', function () {
-            deleteTask(task._id);
-        });
+    // Endpoint pour obtenir les tâches paginées
+    app.get('/tasks', async (req, res) => {
+        const page = parseInt(req.query.page) || 1;
+        const pageSize = parseInt(req.query.pageSize) || 10;
 
-        const completeButton = listItem.querySelector('.complete');
-        completeButton.addEventListener('click', function () {
-            completeTask(task._id);
-        });
-    }
+        const skip = (page - 1) * pageSize;
 
-    function deleteTask(id) {
-        fetch(`/tasks/${id}`, {
-            method: 'DELETE',
-        })
-            .then(response => {
-                if (response.ok) {
-                    document.querySelector(`[data-id="${id}"]`).parentElement.remove();
-                }
-            })
-            .catch(error => {
-                console.error('Erreur lors de la suppression de la tâche :', error);
-            });
-    }
+        const tasks = await tasksCollection.find({}).skip(skip).limit(pageSize).toArray();
+        res.json(tasks);
+    });
 
-    function completeTask(id) {
-        fetch(`/tasks/${id}`, {
-            method: 'PUT',
-        })
-            .then(response => {
-                if (response.ok) {
-                    const listItem = document.querySelector(`[data-id="${id}"]`).parentElement;
-                    listItem.classList.add('completed');
-                }
-            })
-            .catch(error => {
-                console.error('Erreur lors du marquage de la tâche comme terminée :', error);
-            });
-    }
-
-    // Écouteur d'événements pour le bouton "Charger plus"
-    loadMoreButton.addEventListener('click', loadTasks);
-
-    // Chargement initial des tâches
-    loadTasks();
+   // Endpoint pour ajouter une nouvelle tâche
+app.post('/tasks', async (req, res) => {
+    const newTask = req.body;
+    await tasksCollection.insertOne(newTask);
+    res.status(201).send();
 });
 
+// Endpoint pour supprimer une tâche
+app.delete('/tasks/:id', async (req, res) => {
+    const taskId = req.params.id;
+    await tasksCollection.deleteOne({ _id: mongo.ObjectId(taskId) });
+    res.status(200).send();
+});
+
+// Endpoint pour marquer une tâche comme terminée
+app.put('/tasks/:id', async (req, res) => {
+    const taskId = req.params.id;
+    await tasksCollection.updateOne({ _id: mongo.ObjectId(taskId) }, { $set: { completed: true } });
+    res.status(200).send();
+});
+
+    app.listen(PORT, () => {
+        console.log(`Serveur en cours d'exécution sur le port ${PORT}`);
+    });
+});
